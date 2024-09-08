@@ -1,0 +1,218 @@
+<?php
+
+require_once 'CRM/Core/Page.php';
+
+define('DIR_SPOOL',  '/var/www/html/sites/default/files/civicrm/lp/spool');
+define('DIR_STORE',  '/var/www/html/sites/default/files/civicrm/lp/store');
+define('DIR_TEMP',   '/var/www/html/sites/default/files/civicrm/lp/tmp');
+define('BIN_LPSTAT', '/usr/bin/lpstat');
+
+exec ("/bin/bash /var/www/civicrm_custom/extensions/org.fsf.lp/update.sh");
+
+class CRM_Lp_Page_Greeter extends CRM_Core_Page {
+
+
+  function getPdfs($dir) {
+
+    $files = scandir($dir);
+
+    foreach($files as $key => $file ) {
+
+      if(preg_match("/.*\.pdf/i", $file) === 0) {
+	unset($files[$key]);
+      }
+    }
+    return $files;
+  }
+
+
+  function getSpool() {
+    return $this->getPdfs(DIR_SPOOL);
+  }
+
+  function getStore() {
+    return $this->getPdfs(DIR_STORE);
+  }
+
+
+  function getAll() {
+        getSpool();
+	  getDone();    
+  }
+
+  function checkStatus($file) {
+
+    $status['status'] = $_SESSION['mode'] == 'history' ? 'Finished' : 'Not started';
+
+    if(file_exists(DIR_TEMP.'/'.$file.'.dat')) {
+      $status['status'] = 'Running';
+      $dh = fopen(DIR_TEMP.'/'.$file.'.dat', 'r');
+      $data = fgets($dh);
+      $status['printer'] = strstr($data, '-', true);
+      $status['jid'] = trim(strstr($data, '-'), '-');
+      fclose($dh);
+    }
+
+    return $status;
+  }
+
+  function getPrinters() {
+    $lph = popen(BIN_LPSTAT.' -s', 'r');
+   
+    $count = 0;
+   
+    while($data = fgets($lph)) {
+      if($count > 0) {
+	$words = str_word_count($data, 1, '0123456789-_');
+	$output[$count-1] = $words[2];
+      }
+      $count++;
+    }
+
+    pclose($lph);
+    return $output;
+  }
+
+  function getPrinterSelect() {
+    $lph = popen(BIN_LPSTAT.' -s', 'r');
+   
+    $count = 0;
+    $printers = $this->getPrinters();
+   
+    $output = '<form action="/civicrm/lp-admin" method="POST">';
+    $output .= 'Current Printer: <select name="printer" onchange=\'this.form.submit()\'>';
+    foreach($printers as $printer) {
+      if ($printer == $this->getCurrentPrinter()) {
+	$picked = 'selected';
+      }
+      $output .= '<option value="'.$printer.'" '.$picked.'>'.$printer.'</option>';
+      $picked = '';
+    }
+
+    $output .= '</select>';
+    $output .= '<noscript><input type="submit" value="Use"/></noscript>';
+    $output .= '</form>';
+
+    pclose($lph);
+    return $output;
+  }
+
+  function getTable($data) {
+    $output = '';
+    $output .= '<table style="max-width:500px">';
+    $output .= '<tr><th>File</th><th>Status</th><th>Actions</th></tr>';
+
+    foreach($data as $item) {
+      $status = $this->checkStatus($item);
+      $output .= '<tr style="border-bottom:1px solid #ddd">';
+      $output .= '<td><a href="/civicrm/lp-admin?gfile='.$item.'">'.$item.'</a></td><td>'.$status['status'];
+      if(array_key_exists('printer', $status)) $output .= ' ('.$status['printer'].' #'.$status['jid'].')';
+      $output .= '</td><td><a href="/civicrm/lp-admin?file='.$item.'">Print</a>';
+      $output .= ' |<a href="/civicrm/lp-admin?dfile='.$item.'"> Delete</a></td>';
+      $output .= '</tr>';
+    }
+
+    $output .= '</table>';
+    
+    return $output;
+  }
+
+  function getCurrentPrinter() {
+    return $_SESSION['printer'];
+  }
+
+  function printFile($file) {
+    $dir = $_SESSION['mode'] == 'history' ? DIR_STORE : DIR_SPOOL;
+
+    #quidam this fixes issues with unusual fonts
+    popen("/usr/bin/pdftops -level3 $dir/$file $dir/$file.ps", 'r');
+    #the previous one causes this: https://rt.gnu.org/Ticket/Display.html?id=1332919
+    #popen("pdf2ps -dLanguageLevel=3 -r600 $dir/$file $dir/$file.ps", 'r');
+    $lph = popen('/usr/bin/lp -d '.$_SESSION['printer'].' '.$dir.'/'.$file.'.ps', 'r');
+    $data = fgets($lph);
+
+    $words = str_word_count($data, 1, '0123456789-_');
+    $jid = $words[3];
+    pclose($lph);
+
+    /* Create a status file */
+    $tfh = fopen(DIR_TEMP.'/'.$file.'.dat', 'w');
+    fwrite($tfh, $jid."\n");
+    fclose($tfh);
+    popen("/bin/rm $dir/$file.ps", 'r');
+  }
+
+  /* FIXME: Use civicrm session functions */
+  function initSettings() {
+
+    if(isset($_POST)) {
+      if(array_key_exists('printer', $_POST)) {
+	$_SESSION['printer'] = $_POST['printer'];
+      }
+    }
+    if(isset($_GET)) {
+      if(array_key_exists('file', $_GET)) {
+	$this->printFile($_GET['file']);
+	header('Location: /civicrm/lp-admin');
+      }
+      if(array_key_exists('mode', $_GET)) {
+	$_SESSION['mode'] = $_GET['mode'];
+      	    } 
+
+      if(array_key_exists('gfile', $_GET)) {
+	header('Content-Type: application/pdf');                          
+	header('Content-Disposition: attachment; filename="'.$_GET['gfile'].'"');  
+
+	if($_SESSION['mode'] == history) {
+	  echo file_get_contents(DIR_STORE.'/'.$_GET['gfile']);
+        } else {     
+	  echo file_get_contents(DIR_SPOOL.'/'.$_GET['gfile']);
+        }
+//	echo DIR_SPOOL.'/'.$_GET['gfile'];
+	exit;
+      }
+
+
+      /* FIXME: Add confirmation page */
+      if(array_key_exists('dfile', $_GET)) {
+	if($_SESSION['mode'] == history) {
+	  if(file_exists(DIR_STORE.'/'.$_GET['dfile'])) {
+	    unlink(DIR_STORE.'/'.$_GET['dfile']);
+	  }
+        } else {     
+	  if(file_exists(DIR_SPOOL.'/'.$_GET['dfile'])) {
+	    unlink(DIR_SPOOL.'/'.$_GET['dfile']);
+	  }
+        }
+
+	header('Location: /civicrm/lp-admin');
+
+      }
+
+
+    }
+    if(!array_key_exists('printer', $_SESSION)) {
+      $printers = $this->getPrinters();
+      $_SESSION['printer'] = $printers[0];
+    }
+  }
+
+  function run() {
+    // Example: Set the page-title dynamically; alternatively, declare a static title in xml/Menu/*.xml
+    CRM_Utils_System::setTitle(ts('LP-Admin Console'));
+
+    $this->initSettings();
+
+    if($_SESSION['mode'] == 'history') {
+      $spools = $this->getStore();
+    } else {
+      $spools = $this->getSpool();
+    }
+
+    $this->assign('printers', $this->getPrinterSelect());
+
+    $this->assign('datatable', $this->getTable($spools));
+
+    parent::run();
+  }
+}
