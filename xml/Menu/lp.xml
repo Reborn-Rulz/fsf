@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<menu>
+  <item>
+    <path>civicrm/lp-admin</path>
+    <page_callback>CRM_Lp_Page_Greeter</page_callback>
+    <title>Greeter</title>
+    <access_arguments>access CiviCRM</access_arguments>
+  </item>
+  <item>
+    <path>civicrm/lp-setup</path>
+    <page_callback>CRM_Lp_Page_Namer</page_callback>
+    <title>Namer</title>
+    <access_arguments>access CiviCRM</access_arguments>
+  </item>
+</menu>
