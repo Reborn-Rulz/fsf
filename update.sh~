@@ -1,0 +1,10 @@
+#!/bin/bash
+
+dir_spool=/var/www/html/sites/default/files/civicrm/lp/spool
+dir_store=/var/www/html/sites/default/files/civicrm/lp/store
+dir_temp=/var/www/html/sites/default/files/civicrm/lp/tmp
+lpstat=/usr/bin/lpstat
+
+for file in `ls $dir_tmp`; do
+    echo $file
+done
